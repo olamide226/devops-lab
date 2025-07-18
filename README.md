@@ -24,6 +24,8 @@ Personal repository for experimenting with various DevOps tools, Kubernetes mani
 
 Most scripts are executable and ready to use:
 ```bash
+cd generic-kube-manifests/
+
 # Deploy a service
 ./deploy-service.sh
 
