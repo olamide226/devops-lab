@@ -1,0 +1,144 @@
+# Kubernetes Service Deployment Template
+# Replace the following placeholders:
+# - {{SERVICE_NAME}}: Your service name (e.g., hello-world-service)
+# - {{APP_LABEL}}: Application label (e.g., hello-world)
+# - {{CONTAINER_IMAGE}}: Your container image (e.g., nginx:latest)
+# - {{CONTAINER_PORT}}: Port your application listens on (e.g., 80, 3000, 8000)
+# - {{SERVICE_PORT}}: Port to expose via service (usually same as container port)
+# - {{URL_PREFIX}}: URL path prefix for routing (e.g., /web/hello-world or /api/v1/hello-world)
+# - {{REPLICAS}}: Number of replicas (e.g., 1, 2, 3)
+# - {{CPU_REQUEST}}: CPU request (e.g., 100m, 500m)
+# - {{MEMORY_REQUEST}}: Memory request (e.g., 100Mi, 512Mi)
+# - {{CPU_LIMIT}}: CPU limit (e.g., 500m, 1000m)
+# - {{MEMORY_LIMIT}}: Memory limit (e.g., 512Mi, 1Gi)
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{SERVICE_NAME}}-deployment
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{SERVICE_NAME}}
+spec:
+  replicas: {{REPLICAS}}
+  selector:
+    matchLabels:
+      app: {{APP_LABEL}}
+  template:
+    metadata:
+      labels:
+        app: {{APP_LABEL}}
+    spec:
+      containers:
+      - name: {{APP_LABEL}}
+        image: {{CONTAINER_IMAGE}}
+        ports:
+        - containerPort: {{CONTAINER_PORT}}
+        resources:
+          requests:
+            cpu: {{CPU_REQUEST}}
+            memory: {{MEMORY_REQUEST}}
+          limits:
+            cpu: {{CPU_LIMIT}}
+            memory: {{MEMORY_LIMIT}}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+        # Uncomment and modify if you need environment variables
+        # env:
+        # - name: NODE_ENV
+        #   value: development
+        # - name: PORT
+        #   value: "{{CONTAINER_PORT}}"
+        # Uncomment if you need secrets
+        # envFrom:
+        # - secretRef:
+        #     name: {{SERVICE_NAME}}
+      # Uncomment if you need to pull from private registry
+      # imagePullSecrets:
+      # - name: acrshareddeveastus2001
+      securityContext:
+        runAsUser: 1001
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{SERVICE_NAME}}-svc
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{SERVICE_NAME}}
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: {{SERVICE_PORT}}
+    targetPort: {{CONTAINER_PORT}}
+    protocol: TCP
+  selector:
+    app: {{APP_LABEL}}
+  sessionAffinity: None
+
+---
+# VirtualService (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{SERVICE_NAME}}-vs
+  namespace: default
+  labels:
+    argocd.argoproj.io/instance: dev-audworkstream-{{SERVICE_NAME}}
+spec:
+  gateways:
+  - istio-ingressgw-shared-dev-eastus2-001
+  hosts:
+  - '*'
+  http:
+  - match:
+    - uri:
+        prefix: {{URL_PREFIX}}
+    route:
+    - destination:
+        host: {{SERVICE_NAME}}-svc.audience-ns.svc.cluster.local
+        port:
+          number: {{SERVICE_PORT}}
+
+---
+# HorizontalPodAutoscaler (Optional - uncomment if needed)
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: {{SERVICE_NAME}}-hpa
+#   namespace: audience-ns
+#   labels:
+#     app: {{APP_LABEL}}
+#     argocd.argoproj.io/instance: dev-audworkstream-{{SERVICE_NAME}}
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: {{SERVICE_NAME}}-deployment
+#   minReplicas: 1
+#   maxReplicas: 10
+#   metrics:
+#   - type: Resource
+#     resource:
+#       name: cpu
+#       target:
+#         type: Utilization
+#         averageUtilization: 70
+#   - type: Resource
+#     resource:
+#       name: memory
+#       target:
+#         type: Utilization
+#         averageUtilization: 80

@@ -1,0 +1,298 @@
+# Database Service Template with Persistent Volumes
+# Replace the following placeholders:
+# - {{DB_SERVICE_NAME}}: Database service name (e.g., postgres-db, mysql-db, redis-cache)
+# - {{DB_APP_LABEL}}: Application label (e.g., postgres, mysql, redis)
+# - {{DB_IMAGE}}: Database container image (e.g., postgres:15, mysql:8.0, redis:7-alpine)
+# - {{DB_PORT}}: Database port (e.g., 5432 for postgres, 3306 for mysql, 6379 for redis)
+# - {{STORAGE_SIZE}}: Persistent volume size (e.g., 10Gi, 20Gi, 50Gi)
+# - {{STORAGE_CLASS}}: Storage class (e.g., default, managed-premium, managed-csi)
+# - {{CPU_REQUEST}}: CPU request (e.g., 250m, 500m, 1000m)
+# - {{MEMORY_REQUEST}}: Memory request (e.g., 512Mi, 1Gi, 2Gi)
+# - {{CPU_LIMIT}}: CPU limit (e.g., 1000m, 2000m)
+# - {{MEMORY_LIMIT}}: Memory limit (e.g., 1Gi, 2Gi, 4Gi)
+# - {{DB_SECRET_NAME}}: Secret name for database credentials (e.g., postgres-secret)
+# - {{URL_PREFIX}}: URL path prefix for admin interface (optional, e.g., /admin/db)
+
+---
+# Secret for Database Credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{DB_SECRET_NAME}}
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+type: Opaque
+data:
+  # Base64 encoded values - replace with actual encoded credentials
+  # Example: echo -n "mypassword" | base64
+  POSTGRES_PASSWORD: cGFzc3dvcmQxMjM=  # password123
+  POSTGRES_USER: cG9zdGdyZXM=          # postgres
+  POSTGRES_DB: bXlkYXRhYmFzZQ==        # mydatabase
+  # For MySQL, use:
+  # MYSQL_ROOT_PASSWORD: cGFzc3dvcmQxMjM=
+  # MYSQL_DATABASE: bXlkYXRhYmFzZQ==
+  # MYSQL_USER: bXl1c2Vy
+  # MYSQL_PASSWORD: cGFzc3dvcmQxMjM=
+  # For Redis, use:
+  # REDIS_PASSWORD: cGFzc3dvcmQxMjM=
+
+---
+# PersistentVolumeClaim for Database Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{DB_SERVICE_NAME}}-pvc
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{STORAGE_CLASS}}
+  resources:
+    requests:
+      storage: {{STORAGE_SIZE}}
+
+---
+# ConfigMap for Database Configuration (Optional)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{DB_SERVICE_NAME}}-config
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+data:
+  # PostgreSQL configuration
+  postgresql.conf: |
+    # PostgreSQL configuration
+    max_connections = 100
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+  
+  # MySQL configuration (alternative)
+  my.cnf: |
+    [mysqld]
+    max_connections = 100
+    innodb_buffer_pool_size = 128M
+    innodb_log_file_size = 64M
+    innodb_flush_log_at_trx_commit = 2
+    innodb_flush_method = O_DIRECT
+    query_cache_size = 32M
+    query_cache_type = 1
+    slow_query_log = 1
+    long_query_time = 2
+  
+  # Redis configuration (alternative)
+  redis.conf: |
+    # Redis configuration
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    save 900 1
+    save 300 10
+    save 60 10000
+    appendonly yes
+    appendfsync everysec
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{DB_SERVICE_NAME}}-deployment
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+spec:
+  replicas: 1  # Databases typically run as single instance
+  strategy:
+    type: Recreate  # Important for databases with persistent storage
+  selector:
+    matchLabels:
+      app: {{DB_APP_LABEL}}
+  template:
+    metadata:
+      labels:
+        app: {{DB_APP_LABEL}}
+    spec:
+      containers:
+      - name: {{DB_APP_LABEL}}
+        image: {{DB_IMAGE}}
+        ports:
+        - containerPort: {{DB_PORT}}
+          name: db-port
+        resources:
+          requests:
+            cpu: {{CPU_REQUEST}}
+            memory: {{MEMORY_REQUEST}}
+          limits:
+            cpu: {{CPU_LIMIT}}
+            memory: {{MEMORY_LIMIT}}
+        envFrom:
+        - secretRef:
+            name: {{DB_SECRET_NAME}}
+        volumeMounts:
+        - name: db-storage
+          mountPath: /var/lib/postgresql/data  # For PostgreSQL
+          # mountPath: /var/lib/mysql           # For MySQL
+          # mountPath: /data                    # For Redis
+        - name: db-config
+          mountPath: /etc/postgresql/postgresql.conf  # For PostgreSQL
+          subPath: postgresql.conf
+          # mountPath: /etc/mysql/my.cnf                # For MySQL
+          # subPath: my.cnf
+          # mountPath: /usr/local/etc/redis/redis.conf  # For Redis
+          # subPath: redis.conf
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready  # For PostgreSQL
+            # - mysqladmin  # For MySQL
+            # - ping
+            # - redis-cli   # For Redis
+            # - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready  # For PostgreSQL
+            # - mysqladmin  # For MySQL
+            # - ping
+            # - redis-cli   # For Redis
+            # - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999  # postgres user
+          # runAsUser: 999   # mysql user
+          # runAsUser: 999   # redis user
+      volumes:
+      - name: db-storage
+        persistentVolumeClaim:
+          claimName: {{DB_SERVICE_NAME}}-pvc
+      - name: db-config
+        configMap:
+          name: {{DB_SERVICE_NAME}}-config
+      securityContext:
+        fsGroup: 999  # Ensure proper file permissions
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{DB_SERVICE_NAME}}-svc
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+spec:
+  type: ClusterIP
+  ports:
+  - name: db-port
+    port: {{DB_PORT}}
+    targetPort: {{DB_PORT}}
+    protocol: TCP
+  selector:
+    app: {{DB_APP_LABEL}}
+  sessionAffinity: None
+
+---
+# Headless Service for StatefulSet-like behavior (Optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{DB_SERVICE_NAME}}-headless
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: db-port
+    port: {{DB_PORT}}
+    targetPort: {{DB_PORT}}
+    protocol: TCP
+  selector:
+    app: {{DB_APP_LABEL}}
+
+---
+# VirtualService for Database Admin Interface (Optional - only if DB has web interface)
+# Uncomment if your database has a web admin interface (like pgAdmin, phpMyAdmin, Redis Commander)
+# apiVersion: networking.istio.io/v1beta1
+# kind: VirtualService
+# metadata:
+#   name: {{DB_SERVICE_NAME}}-admin-vs
+#   namespace: default
+#   labels:
+#     argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+# spec:
+#   gateways:
+#   - istio-ingressgw-shared-dev-eastus2-001
+#   hosts:
+#   - '*'
+#   http:
+#   - match:
+#     - uri:
+#         prefix: {{URL_PREFIX}}
+#     route:
+#     - destination:
+#         host: {{DB_SERVICE_NAME}}-svc.audience-ns.svc.cluster.local
+#         port:
+#           number: 8080  # Admin interface port (different from DB port)
+
+---
+# NetworkPolicy for Database Security (Optional but recommended)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{DB_SERVICE_NAME}}-netpol
+  namespace: audience-ns
+  labels:
+    app: {{DB_APP_LABEL}}
+    argocd.argoproj.io/instance: dev-audworkstream-{{DB_SERVICE_NAME}}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{DB_APP_LABEL}}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: audience-ns
+    ports:
+    - protocol: TCP
+      port: {{DB_PORT}}
+  egress:
+  - {} # Allow all egress for now - restrict as needed

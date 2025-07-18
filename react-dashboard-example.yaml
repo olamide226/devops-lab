@@ -1,0 +1,480 @@
+# React Dashboard Example
+# Ready to deploy - just run: kubectl apply -f react-dashboard-example.yaml
+# This creates a React dashboard app with nginx serving
+
+---
+# ConfigMap for Nginx Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: react-dashboard-nginx-config
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: nginx-config
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /var/run/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log /var/log/nginx/access.log main;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 16M;
+
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer-when-downgrade" always;
+        add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+
+        server {
+            listen 3000;
+            server_name localhost;
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+
+            # Handle React Router (SPA routing)
+            location / {
+                try_files $uri $uri/ /index.html;
+                
+                # Cache static assets
+                location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                    expires 1y;
+                    add_header Cache-Control "public, immutable";
+                }
+            }
+
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+
+            # API proxy to audience services
+            location /api/ {
+                proxy_pass https://dev.lionis.ai/api/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_cache_bypass $http_upgrade;
+            }
+
+            error_page 404 /index.html;
+            error_page 500 502 503 504 /50x.html;
+            location = /50x.html {
+                root /usr/share/nginx/html;
+            }
+        }
+    }
+
+---
+# ConfigMap for Environment Variables
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: react-dashboard-env-config
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: env-config
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+data:
+  config.js: |
+    // Runtime configuration for React Dashboard
+    window.APP_CONFIG = {
+      API_BASE_URL: 'https://dev.lionis.ai/api/v2',
+      ENVIRONMENT: 'development',
+      APP_NAME: 'Audience Dashboard',
+      VERSION: '1.0.0',
+      FEATURES: {
+        ANALYTICS: true,
+        DEBUG: true,
+        MAINTENANCE_MODE: false,
+        DARK_MODE: true,
+        NOTIFICATIONS: true
+      },
+      URLS: {
+        SUPPORT: 'https://dev.lionis.ai/support',
+        DOCS: 'https://dev.lionis.ai/docs',
+        STATUS: 'https://dev.lionis.ai/status'
+      },
+      SERVICES: {
+        AUDIENCE_SERVICE: 'https://dev.lionis.ai/api/v2/audience-service',
+        AGA_SERVICE: 'https://dev.lionis.ai/api/v2/aga-service',
+        MCP_SERVER: 'https://dev.lionis.ai/api/v2/audience-mcp-server-discovery'
+      }
+    };
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-dashboard-deployment
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: react-dashboard
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: react-dashboard
+        component: frontend
+    spec:
+      containers:
+      - name: react-dashboard
+        # Using nginx with a simple HTML page for demo - replace with your React app image
+        image: nginx:alpine
+        ports:
+        - containerPort: 3000
+          name: http
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        env:
+        - name: NODE_ENV
+          value: "development"
+        - name: REACT_APP_API_BASE_URL
+          value: "https://dev.lionis.ai/api/v2"
+        - name: REACT_APP_ENVIRONMENT
+          value: "development"
+        - name: REACT_APP_VERSION
+          value: "1.0.0"
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: env-config
+          mountPath: /usr/share/nginx/html/config.js
+          subPath: config.js
+        - name: demo-content
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 101
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: react-dashboard-nginx-config
+      - name: env-config
+        configMap:
+          name: react-dashboard-env-config
+      - name: demo-content
+        configMap:
+          name: react-dashboard-demo-content
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+
+---
+# Demo HTML Content (Replace with your React build)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: react-dashboard-demo-content
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: demo-content
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Audience Dashboard</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+            }
+            .container { 
+                text-align: center; 
+                padding: 2rem;
+                background: rgba(255,255,255,0.1);
+                border-radius: 20px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                max-width: 600px;
+            }
+            h1 { 
+                font-size: 3rem; 
+                margin-bottom: 1rem;
+                background: linear-gradient(45deg, #fff, #f0f0f0);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .subtitle { 
+                font-size: 1.2rem; 
+                margin-bottom: 2rem; 
+                opacity: 0.9;
+            }
+            .features {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 1rem;
+                margin: 2rem 0;
+            }
+            .feature {
+                background: rgba(255,255,255,0.1);
+                padding: 1rem;
+                border-radius: 10px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            .status { 
+                margin-top: 2rem; 
+                padding: 1rem;
+                background: rgba(0,255,0,0.2);
+                border-radius: 10px;
+                border: 1px solid rgba(0,255,0,0.3);
+            }
+            .config-info {
+                margin-top: 2rem;
+                padding: 1rem;
+                background: rgba(255,255,255,0.1);
+                border-radius: 10px;
+                text-align: left;
+                font-family: monospace;
+                font-size: 0.9rem;
+            }
+            a { color: #fff; text-decoration: underline; }
+        </style>
+        <script src="/config.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎛️ Audience Dashboard</h1>
+            <p class="subtitle">React Application Template - Ready for Development</p>
+            
+            <div class="features">
+                <div class="feature">
+                    <h3>🚀 Production Ready</h3>
+                    <p>Nginx + React with optimized configuration</p>
+                </div>
+                <div class="feature">
+                    <h3>🔄 Auto Scaling</h3>
+                    <p>HPA configured for traffic spikes</p>
+                </div>
+                <div class="feature">
+                    <h3>🛡️ Secure</h3>
+                    <p>Security headers and best practices</p>
+                </div>
+                <div class="feature">
+                    <h3>📊 Monitoring</h3>
+                    <p>Health checks and observability</p>
+                </div>
+            </div>
+
+            <div class="status">
+                ✅ Application is running successfully!<br>
+                🌐 Accessible via Istio Gateway<br>
+                📈 Metrics and scaling enabled
+            </div>
+
+            <div class="config-info">
+                <strong>Configuration:</strong><br>
+                <div id="config-display">Loading configuration...</div>
+            </div>
+        </div>
+
+        <script>
+            // Display runtime configuration
+            if (window.APP_CONFIG) {
+                document.getElementById('config-display').innerHTML = 
+                    'Environment: ' + window.APP_CONFIG.ENVIRONMENT + '<br>' +
+                    'API Base URL: ' + window.APP_CONFIG.API_BASE_URL + '<br>' +
+                    'Version: ' + window.APP_CONFIG.VERSION + '<br>' +
+                    'Features: ' + JSON.stringify(window.APP_CONFIG.FEATURES, null, 2);
+            }
+        </script>
+    </body>
+    </html>
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: react-dashboard-svc
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app: react-dashboard
+  sessionAffinity: None
+
+---
+# VirtualService (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: react-dashboard-vs
+  namespace: default
+  labels:
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+spec:
+  gateways:
+  - istio-ingressgw-shared-dev-eastus2-001
+  hosts:
+  - '*'
+  http:
+  - match:
+    - uri:
+        prefix: /web/dashboard
+    route:
+    - destination:
+        host: react-dashboard-svc.audience-ns.svc.cluster.local
+        port:
+          number: 3000
+    headers:
+      response:
+        add:
+          X-App-Name: react-dashboard
+          X-App-Version: "1.0.0"
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: react-dashboard-hpa
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: react-dashboard-deployment
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: react-dashboard-pdb
+  namespace: audience-ns
+  labels:
+    app: react-dashboard
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-react-dashboard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: react-dashboard

@@ -1,0 +1,223 @@
+# PostgreSQL Database Example
+# Ready to deploy - just run: kubectl apply -f postgres-db-example.yaml
+# This creates a PostgreSQL database with persistent storage
+
+---
+# Secret for PostgreSQL Credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+type: Opaque
+data:
+  # Base64 encoded values
+  POSTGRES_PASSWORD: cGFzc3dvcmQxMjM=  # password123
+  POSTGRES_USER: cG9zdGdyZXM=          # postgres
+  POSTGRES_DB: YXVkaWVuY2VfZGI=        # audience_db
+
+---
+# PersistentVolumeClaim for PostgreSQL Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-db-pvc
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: default
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ConfigMap for PostgreSQL Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-db-config
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration for development
+    max_connections = 100
+    shared_buffers = 256MB
+    effective_cache_size = 512MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    log_statement = 'all'
+    log_duration = on
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-db-deployment
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Important for databases with persistent storage
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        envFrom:
+        - secretRef:
+            name: postgres-secret
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999  # postgres user
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-db-pvc
+      - name: postgres-config
+        configMap:
+          name: postgres-db-config
+      securityContext:
+        fsGroup: 999
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db-svc
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: postgres
+  sessionAffinity: None
+
+---
+# Headless Service for direct pod access
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db-headless
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: postgres
+
+---
+# NetworkPolicy for PostgreSQL Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-db-netpol
+  namespace: audience-ns
+  labels:
+    app: postgres
+    argocd.argoproj.io/instance: dev-audworkstream-postgres-db
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: audience-ns
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:
+  - {} # Allow all egress for now

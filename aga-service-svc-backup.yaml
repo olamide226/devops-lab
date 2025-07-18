@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"aga-service","argocd.argoproj.io/instance":"dev-audworkstream-aga-service"},"name":"aga-service-svc","namespace":"audience-ns"},"spec":{"ports":[{"name":"http","port":8000,"protocol":"TCP","targetPort":8000}],"selector":{"app":"aga-service"},"sessionAffinity":"None","type":"ClusterIP"}}
+  creationTimestamp: "2025-07-10T16:40:12Z"
+  labels:
+    app: aga-service
+    argocd.argoproj.io/instance: dev-audworkstream-aga-service
+  name: aga-service-svc
+  namespace: audience-ns
+  resourceVersion: "260089358"
+  uid: 208f68da-b857-4ca9-8ef4-c1386229576f
+spec:
+  clusterIP: 10.0.140.210
+  clusterIPs:
+  - 10.0.140.210
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http
+    port: 8000
+    protocol: TCP
+    targetPort: 8000
+  selector:
+    app: aga-service
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}

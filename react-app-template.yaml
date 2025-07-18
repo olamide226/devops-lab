@@ -1,0 +1,353 @@
+# React Application Template with Nginx
+# Replace the following placeholders:
+# - {{REACT_APP_NAME}}: React app name (e.g., user-dashboard, admin-panel)
+# - {{APP_LABEL}}: Application label (e.g., user-dashboard, admin-panel)
+# - {{REACT_IMAGE}}: React app container image (e.g., your-registry/user-dashboard:v1.0)
+# - {{URL_PREFIX}}: URL path prefix for routing (e.g., /web/dashboard, /admin)
+# - {{REPLICAS}}: Number of replicas (e.g., 2, 3, 5)
+# - {{CPU_REQUEST}}: CPU request (e.g., 100m, 250m)
+# - {{MEMORY_REQUEST}}: Memory request (e.g., 128Mi, 256Mi)
+# - {{CPU_LIMIT}}: CPU limit (e.g., 500m, 1000m)
+# - {{MEMORY_LIMIT}}: Memory limit (e.g., 512Mi, 1Gi)
+# - {{API_BASE_URL}}: Backend API base URL (e.g., https://dev.lionis.ai/api/v2)
+# - {{ENVIRONMENT}}: Environment name (e.g., development, staging, production)
+
+---
+# ConfigMap for Nginx Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{REACT_APP_NAME}}-nginx-config
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: nginx-config
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /var/run/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        # Logging format
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log /var/log/nginx/access.log main;
+
+        # Performance settings
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 16M;
+
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer-when-downgrade" always;
+        add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+
+        server {
+            listen 3000;
+            server_name localhost;
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+
+            # Handle React Router (SPA routing)
+            location / {
+                try_files $uri $uri/ /index.html;
+                
+                # Cache static assets
+                location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                    expires 1y;
+                    add_header Cache-Control "public, immutable";
+                }
+            }
+
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+
+            # API proxy (optional - uncomment if needed)
+            # location /api/ {
+            #     proxy_pass {{API_BASE_URL}}/;
+            #     proxy_http_version 1.1;
+            #     proxy_set_header Upgrade $http_upgrade;
+            #     proxy_set_header Connection 'upgrade';
+            #     proxy_set_header Host $host;
+            #     proxy_set_header X-Real-IP $remote_addr;
+            #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            #     proxy_set_header X-Forwarded-Proto $scheme;
+            #     proxy_cache_bypass $http_upgrade;
+            # }
+
+            # Error pages
+            error_page 404 /index.html;
+            error_page 500 502 503 504 /50x.html;
+            location = /50x.html {
+                root /usr/share/nginx/html;
+            }
+        }
+    }
+
+---
+# ConfigMap for Environment Variables (Runtime Config)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{REACT_APP_NAME}}-env-config
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: env-config
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+data:
+  config.js: |
+    // Runtime configuration for React app
+    window.APP_CONFIG = {
+      API_BASE_URL: '{{API_BASE_URL}}',
+      ENVIRONMENT: '{{ENVIRONMENT}}',
+      APP_NAME: '{{REACT_APP_NAME}}',
+      VERSION: '1.0.0',
+      FEATURES: {
+        ANALYTICS: true,
+        DEBUG: {{ENVIRONMENT}} === 'development',
+        MAINTENANCE_MODE: false
+      },
+      URLS: {
+        SUPPORT: 'https://dev.lionis.ai/support',
+        DOCS: 'https://dev.lionis.ai/docs',
+        STATUS: 'https://dev.lionis.ai/status'
+      }
+    };
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{REACT_APP_NAME}}-deployment
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+spec:
+  replicas: {{REPLICAS}}
+  selector:
+    matchLabels:
+      app: {{APP_LABEL}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: {{APP_LABEL}}
+        component: frontend
+    spec:
+      containers:
+      - name: {{APP_LABEL}}
+        image: {{REACT_IMAGE}}
+        ports:
+        - containerPort: 3000
+          name: http
+        resources:
+          requests:
+            cpu: {{CPU_REQUEST}}
+            memory: {{MEMORY_REQUEST}}
+          limits:
+            cpu: {{CPU_LIMIT}}
+            memory: {{MEMORY_LIMIT}}
+        # Environment variables for build-time configuration
+        env:
+        - name: NODE_ENV
+          value: "{{ENVIRONMENT}}"
+        - name: REACT_APP_API_BASE_URL
+          value: "{{API_BASE_URL}}"
+        - name: REACT_APP_ENVIRONMENT
+          value: "{{ENVIRONMENT}}"
+        - name: REACT_APP_VERSION
+          value: "1.0.0"
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: env-config
+          mountPath: /usr/share/nginx/html/config.js
+          subPath: config.js
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 101  # nginx user
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: {{REACT_APP_NAME}}-nginx-config
+      - name: env-config
+        configMap:
+          name: {{REACT_APP_NAME}}-env-config
+      # Uncomment if you need to pull from private registry
+      # imagePullSecrets:
+      # - name: acrshareddeveastus2001
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{REACT_APP_NAME}}-svc
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app: {{APP_LABEL}}
+  sessionAffinity: None
+
+---
+# VirtualService (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{REACT_APP_NAME}}-vs
+  namespace: default
+  labels:
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+spec:
+  gateways:
+  - istio-ingressgw-shared-dev-eastus2-001
+  hosts:
+  - '*'
+  http:
+  - match:
+    - uri:
+        prefix: {{URL_PREFIX}}
+    route:
+    - destination:
+        host: {{REACT_APP_NAME}}-svc.audience-ns.svc.cluster.local
+        port:
+          number: 3000
+    # Optional: Add headers for React apps
+    headers:
+      response:
+        add:
+          X-App-Name: {{REACT_APP_NAME}}
+          X-App-Version: "1.0.0"
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{REACT_APP_NAME}}-hpa
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{REACT_APP_NAME}}-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# PodDisruptionBudget for High Availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{REACT_APP_NAME}}-pdb
+  namespace: audience-ns
+  labels:
+    app: {{APP_LABEL}}
+    component: frontend
+    argocd.argoproj.io/instance: dev-audworkstream-{{REACT_APP_NAME}}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: {{APP_LABEL}}

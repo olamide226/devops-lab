@@ -1,0 +1,81 @@
+# Secrets and sensitive files
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets.yaml
+*-secret.yaml
+.env
+.env.local
+.env.production
+
+# Kubernetes sensitive configs
+kubeconfig
+*kubeconfig*
+.kube/config
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.sublime-*
+.vim/
+
+# Terraform (if you add it later)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+
+# Helm (if you add it later)
+charts/*.tgz
+.helmignore
+
+# Docker
+.dockerignore
+
+# Build artifacts
+dist/
+build/
+target/
+*.jar
+*.war
+
+# Node modules (for any JS tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (for any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Backup files (you might want to keep these)
+# *.backup
+# *-backup.yaml
